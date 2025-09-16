@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Add Your Photo</title>
+  <style>
+    :root {
+      /* ---- SET THESE 3 VALUES TO MATCH YOUR BLACK CIRCLE ---- */
+      --circle-x: 50%;   /* center X as percent of image width */
+      --circle-y: 41%;   /* center Y as percent of image height */
+      --circle-r: 12.3%; /* radius as percent of image width */
+      /* ------------------------------------------------------- */
+
+      --ui: 14px;
+      --btn: #111;
+      --btnText: #fff;
+      --accent: #2d6cdf;
+    }
+    html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+    body { display: grid; place-items: center; background: #f4f4f4; }
+
+    .card { width: min(100vw, 480px); background: #fff; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.08); overflow: hidden; }
+    .stage { position: relative; width: 100%; aspect-ratio: 622/1124; background: #eee; }
+    /* The background poster image (replace src via JS once loaded) */
+    #poster { position:absolute; inset:0; width:100%; height:100%; object-fit: contain; }
+
+    /* clickable hotspot aligned to the circle */
+    .hotspot { position:absolute; transform: translate(-50%, -50%); display:grid; place-items:center; cursor: pointer; }
+    .hotspot::after { content:""; width:100%; height:100%; border-radius:50%; border: 2px dashed rgba(255,255,255,.9); box-shadow:0 0 0 9999px rgba(0,0,0,.15) inset; }
+    .hotspot .cta { position:absolute; bottom:-2.2rem; font-size: var(--ui); background: rgba(0,0,0,.7); color:#fff; padding:.25rem .5rem; border-radius: .5rem; }
+
+    /* the uploaded photo masked into the circle */
+    #maskCanvas { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+
+    .controls { padding: .75rem .9rem 1rem; display: grid; gap: .6rem; font-size: var(--ui); }
+    .row { display:grid; grid-template-columns: 1fr auto; gap: .5rem; align-items:center; }
+    .sliders { display:grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+    input[type="range"] { width:100%; }
+
+    button { appearance:none; border:0; background: var(--btn); color: var(--btnText); padding:.65rem .9rem; border-radius: .6rem; font-weight:600; cursor:pointer; }
+    button.secondary { background:#eaeaea; color:#111; }
+
+    .bar { display:flex; gap:.5rem; }
+    .hint { color:#666; font-size:12px; }
+
+    .sr-only{ position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); border:0; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="stage" id="stage" aria-label="Template image with a circular photo placeholder">
+      <img id="poster" alt="Template" />
+      <canvas id="maskCanvas" aria-hidden="true"></canvas>
+      <div id="hotspot" class="hotspot" role="button" aria-label="Click to add your photo">
+        <span class="cta">Tap to add photo</span>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="row">
+        <div>
+          <strong>1) Upload</strong>
+          <div class="hint">Click the circle above to pick a photo. Then adjust if needed.</div>
+        </div>
+        <div class="bar">
+          <button id="reset" class="secondary" title="Reset">Reset</button>
+          <button id="download">Download</button>
+        </div>
+      </div>
+
+      <div class="sliders" aria-live="polite">
+        <label>Zoom
+          <input id="zoom" type="range" min="0.5" max="3" step="0.01" value="1" />
+        </label>
+        <label>Rotate
+          <input id="rotate" type="range" min="-180" max="180" step="1" value="0" />
+        </label>
+        <label>Move X
+          <input id="moveX" type="range" min="-1" max="1" step="0.002" value="0" />
+        </label>
+        <label>Move Y
+          <input id="moveY" type="range" min="-1" max="1" step="0.002" value="0" />
+        </label>
+      </div>
+
+      <div class="hint">Pro tip: On mobile, pinch to zoom and drag inside the circle to reposition.</div>
+    </div>
+  </div>
+
+  <!-- Hidden file picker -->
+  <input id="file" class="sr-only" type="file" accept="image/*" />
+
+  <script>
+    // ====== OWNER SETUP ======
+    // Put your template image file (the poster with the black circle) in the same folder
+    // and name it EXACTLY 'template.jpg'. If it's a PNG, change the filename below.
+    const TEMPLATE_SRC = 'template.jpg';
+
+    // Default circle geometry as PERCENT of the poster width/height.
+    // Tweak these three numbers once to EXACTLY cover the black circle.
+    // You can also pass ?cx=50&cy=41&cr=12.3 in the URL to preview different values.
+    function pct(n){ return n/100; }
+
+    const url = new URL(location.href);
+    const cxPct = parseFloat(url.searchParams.get('cx')) || parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--circle-x'));
+    const cyPct = parseFloat(url.searchParams.get('cy')) || parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--circle-y'));
+    const crPct = parseFloat(url.searchParams.get('cr')) || parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--circle-r'));
+
+    const poster = document.getElementById('poster');
+    const stage  = document.getElementById('stage');
+    const hotspot = document.getElementById('hotspot');
+    const fileInput = document.getElementById('file');
+    const maskCanvas = document.getElementById('maskCanvas');
+    const ctx = maskCanvas.getContext('2d');
+
+    const zoom = document.getElementById('zoom');
+    const rotate = document.getElementById('rotate');
+    const moveX = document.getElementById('moveX');
+    const moveY = document.getElementById('moveY');
+    const resetBtn = document.getElementById('reset');
+    const dlBtn = document.getElementById('download');
+
+    let posterW=0, posterH=0, circle={x:0,y:0,r:0};
+    let photo=null; // Image object
+    let state={ scale:1, rot:0, dx:0, dy:0 };
+
+    // Load poster image
+    poster.src = TEMPLATE_SRC;
+    poster.onload = () => {
+      // Ensure our stage keeps the poster's intrinsic aspect ratio
+      // We already used a reasonable default via CSS; compute actual pixels now
+      const rect = stage.getBoundingClientRect();
+      posterW = rect.width; // canvas will match stage size (object-fit: contain)
+      posterH = rect.height;
+      maskCanvas.width = posterW; maskCanvas.height = posterH;
+
+      circle.x = pct(cxPct) * posterW;
+      circle.y = pct(cyPct) * posterH;
+      circle.r = pct(crPct) * posterW; // radius relative to width keeps shape consistent
+
+      positionHotspot();
+      draw();
+    };
+
+    function positionHotspot(){
+      hotspot.style.left = circle.x + 'px';
+      hotspot.style.top  = circle.y + 'px';
+      const d = circle.r*2;
+      hotspot.style.width = d + 'px';
+      hotspot.style.height = d + 'px';
+    }
+
+    // Pick file when clicking hotspot
+    hotspot.addEventListener('click', ()=> fileInput.click());
+
+    fileInput.addEventListener('change', async (e)=>{
+      const f = e.target.files[0];
+      if(!f) return;
+      const img = new Image();
+      img.onload = ()=>{ photo = img; autoFit(); draw(); };
+      img.src = URL.createObjectURL(f);
+    });
+
+    // Sliders
+    [zoom, rotate, moveX, moveY].forEach(inp=> inp.addEventListener('input', ()=>{
+      state.scale = parseFloat(zoom.value);
+      state.rot = parseFloat(rotate.value) * Math.PI/180;
+      state.dx = parseFloat(moveX.value);
+      state.dy = parseFloat(moveY.value);
+      draw();
+    }));
+
+    resetBtn.addEventListener('click', ()=>{ state={scale:1, rot:0, dx:0, dy:0}; zoom.value=1; rotate.value=0; moveX.value=0; moveY.value=0; draw(); });
+
+    // Drag to move & pinch to zoom
+    let dragging=false, last={x:0,y:0, d:0};
+    function stagePoint(evt){
+      const r = stage.getBoundingClientRect();
+      if(evt.touches && evt.touches.length){
+        const t = evt.touches[0];
+        return {x: t.clientX - r.left, y: t.clientY - r.top};
+      }
+      return {x: evt.clientX - r.left, y: evt.clientY - r.top};
+    }
+    function insideCircle(p){
+      const dx = p.x - circle.x, dy=p.y - circle.y; return Math.hypot(dx,dy) <= circle.r;
+    }
+    stage.addEventListener('pointerdown', (e)=>{
+      if(!photo) return;
+      const p = stagePoint(e);
+      if(!insideCircle(p)) return;
+      dragging=true; last= p; stage.setPointerCapture(e.pointerId);
+    });
+    stage.addEventListener('pointermove', (e)=>{
+      if(!dragging) return;
+      const p = stagePoint(e);
+      const ndx = (p.x - last.x) / circle.r; // normalize to radius
+      const ndy = (p.y - last.y) / circle.r;
+      state.dx += ndx; state.dy += ndy; last = p; draw();
+    });
+    stage.addEventListener('pointerup', ()=> dragging=false);
+
+    // Touch pinch zoom
+    stage.addEventListener('touchmove', (e)=>{
+      if(!photo) return;
+      if(e.touches.length===2){
+        e.preventDefault();
+        const a=e.touches[0], b=e.touches[1];
+        const dist = Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY);
+        if(!last.d) last.d = dist; else {
+          const ratio = dist / last.d; last.d = dist; state.scale *= ratio; state.scale = Math.max(.5, Math.min(3, state.scale)); zoom.value = state.scale.toFixed(2); draw();
+        }
+      }
+    }, {passive:false});
+    stage.addEventListener('touchend', ()=>{ last.d=0; });
+
+    function autoFit(){
+      // Cover the circle with the photo initially
+      if(!photo) return;
+      state = { scale:1, rot:0, dx:0, dy:0 };
+      // scale so the smaller photo dimension covers the circle diameter
+      const d = circle.r*2;
+      const scaleW = d / photo.width;
+      const scaleH = d / photo.height;
+      state.scale = Math.max(scaleW, scaleH) * 1.05; // slight overscan
+      zoom.value = state.scale.toFixed(2);
+      rotate.value = 0; moveX.value=0; moveY.value=0;
+    }
+
+    function draw(){
+      // Clear
+      ctx.clearRect(0,0,maskCanvas.width, maskCanvas.height);
+      // Draw poster first (for download we redraw on an offscreen canvas; this is only preview layer for the masked photo)
+      // Build clip
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(circle.x, circle.y, circle.r, 0, Math.PI*2);
+      ctx.clip();
+
+      if(photo){
+        ctx.translate(circle.x, circle.y);
+        ctx.rotate(state.rot);
+        const drawW = photo.width * state.scale;
+        const drawH = photo.height * state.scale;
+        const ox = -drawW/2 + state.dx * circle.r; // move by fraction of radius
+        const oy = -drawH/2 + state.dy * circle.r;
+        ctx.drawImage(photo, ox, oy, drawW, drawH);
+        ctx.setTransform(1,0,0,1,0,0);
+      }
+      ctx.restore();
+    }
+
+    // Download final composite
+    dlBtn.addEventListener('click', ()=>{
+      if(!poster.complete){ alert('Template not loaded yet.'); return; }
+      const off = document.createElement('canvas');
+      // Render at the poster's natural pixel size for sharp output
+      const naturalW = poster.naturalWidth || maskCanvas.width;
+      const naturalH = poster.naturalHeight || maskCanvas.height;
+      off.width = naturalW; off.height = naturalH;
+      const octx = off.getContext('2d');
+
+      // Draw poster
+      octx.drawImage(poster, 0, 0, naturalW, naturalH);
+
+      if(photo){
+        // Compute circle in natural coordinates
+        const scaleX = naturalW / maskCanvas.width;
+        const scaleY = naturalH / maskCanvas.height;
+        const cx = circle.x * scaleX;
+        const cy = circle.y * scaleY;
+        const cr = circle.r * scaleX; // x-scale == y-scale for our aspect usage
+
+        octx.save();
+        octx.beginPath(); octx.arc(cx, cy, cr, 0, Math.PI*2); octx.clip();
+        // Photo transform at natural scale
+        octx.translate(cx, cy);
+        octx.rotate(state.rot);
+        const drawW = photo.width * state.scale * scaleX;
+        const drawH = photo.height * state.scale * scaleY;
+        const ox = -drawW/2 + state.dx * cr; // move by fraction of radius
+        const oy = -drawH/2 + state.dy * cr;
+        octx.drawImage(photo, ox, oy, drawW, drawH);
+        octx.restore();
+      }
+
+      // Trigger download
+      off.toBlob((blob)=>{
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'my-photo-card.png';
+        a.click();
+        setTimeout(()=> URL.revokeObjectURL(a.href), 1000);
+      }, 'image/png');
+    });
+  </script>
+</body>
+</html>
