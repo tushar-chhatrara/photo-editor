@@ -8,8 +8,8 @@
     :root {
       /* ---- SET THESE 3 VALUES TO MATCH YOUR BLACK CIRCLE ---- */
       --circle-x: 50%;   /* center X as percent of image width */
-      --circle-y: 41%;   /* center Y as percent of image height */
-      --circle-r: 12.3%; /* radius as percent of image width */
+      --circle-y: 42%;   /* center Y as percent of image height */
+      --circle-r: 15.3%; /* radius as percent of image width */
       /* ------------------------------------------------------- */
 
       --ui: 14px;
@@ -18,20 +18,18 @@
       --accent: #2d6cdf;
     }
     html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
-    body { display: grid; place-items: center; background: #f4f4f4; }
+    body { display: flex; justify-content: center; align-items: center; background: #f4f4f4; min-height: 100vh; }
 
     .card { width: min(100vw, 480px); background: #fff; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.08); overflow: hidden; }
     .stage { position: relative; width: 100%; aspect-ratio: 622/1124; background: #eee; }
     /* The background poster image (replace src via JS once loaded) */
-    #poster { position:absolute; inset:0; width:100%; height:100%; object-fit: contain; }
-
-    /* clickable hotspot aligned to the circle */
+    #poster { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }    /* clickable hotspot aligned to the circle */
     .hotspot { position:absolute; transform: translate(-50%, -50%); display:grid; place-items:center; cursor: pointer; }
     .hotspot::after { content:""; width:100%; height:100%; border-radius:50%; border: 2px dashed rgba(255,255,255,.9); box-shadow:0 0 0 9999px rgba(0,0,0,.15) inset; }
     .hotspot .cta { position:absolute; bottom:-2.2rem; font-size: var(--ui); background: rgba(0,0,0,.7); color:#fff; padding:.25rem .5rem; border-radius: .5rem; }
 
     /* the uploaded photo masked into the circle */
-    #maskCanvas { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+    #maskCanvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 
     .controls { padding: .75rem .9rem 1rem; display: grid; gap: .6rem; font-size: var(--ui); }
     .row { display:grid; grid-template-columns: 1fr auto; gap: .5rem; align-items:center; }
@@ -71,7 +69,7 @@
 
       <div class="sliders" aria-live="polite">
         <label>Zoom
-          <input id="zoom" type="range" min="0.5" max="3" step="0.01" value="1" />
+          <input id="zoom" type="range" min="0.05" max="3" step="0.01" value="0" />
         </label>
         <label>Rotate
           <input id="rotate" type="range" min="-180" max="180" step="1" value="0" />
@@ -94,8 +92,8 @@
   <script>
     // ====== OWNER SETUP ======
     // Put your template image file (the poster with the black circle) in the same folder
-    // and name it EXACTLY 'template.jpg'. If it's a PNG, change the filename below.
-    const TEMPLATE_SRC = 'Template.jpg';
+    // and name it EXACTLY 'Template.jpg'. If it's a PNG, change the filename below.
+    const TEMPLATE_SRC = 'Template.JPG';
 
     // Default circle geometry as PERCENT of the poster width/height.
     // Tweak these three numbers once to EXACTLY cover the black circle.
@@ -177,11 +175,16 @@
     let dragging=false, last={x:0,y:0, d:0};
     function stagePoint(evt){
       const r = stage.getBoundingClientRect();
+      let clientX, clientY;
       if(evt.touches && evt.touches.length){
         const t = evt.touches[0];
-        return {x: t.clientX - r.left, y: t.clientY - r.top};
+        clientX = t.clientX;
+        clientY = t.clientY;
+      } else {
+        clientX = evt.clientX;
+        clientY = evt.clientY;
       }
-      return {x: evt.clientX - r.left, y: evt.clientY - r.top};
+      return {x: clientX - r.left, y: clientY - r.top};
     }
     function insideCircle(p){
       const dx = p.x - circle.x, dy=p.y - circle.y; return Math.hypot(dx,dy) <= circle.r;
@@ -252,47 +255,87 @@
     }
 
     // Download final composite
-    dlBtn.addEventListener('click', ()=>{
-      if(!poster.complete){ alert('Template not loaded yet.'); return; }
-      const off = document.createElement('canvas');
-      // Render at the poster's natural pixel size for sharp output
-      const naturalW = poster.naturalWidth || maskCanvas.width;
-      const naturalH = poster.naturalHeight || maskCanvas.height;
-      off.width = naturalW; off.height = naturalH;
-      const octx = off.getContext('2d');
+    dlBtn.addEventListener('click', async ()=>{
+      console.log('Download button clicked');
+      console.log('Poster complete:', poster.complete);
+      console.log('Photo exists:', !!photo);
+      
+      if(!poster.complete){ 
+        alert('Template not loaded yet. Please wait for the template image to load.'); 
+        return; 
+      }
+      if(!photo){
+        alert('Please upload a photo first before downloading.');
+        return;
+      }
+      
+      try {
+        // Create a new canvas for download
+        const off = document.createElement('canvas');
+        const naturalW = poster.naturalWidth || posterW || 400;
+        const naturalH = poster.naturalHeight || posterH || 600;
+        console.log('Canvas size:', naturalW, 'x', naturalH);
+        
+        off.width = naturalW; 
+        off.height = naturalH;
+        const octx = off.getContext('2d');
 
-      // Draw poster
-      octx.drawImage(poster, 0, 0, naturalW, naturalH);
+        // Draw white background first
+        octx.fillStyle = '#ffffff';
+        octx.fillRect(0, 0, naturalW, naturalH);
+        
+        // Try to draw the poster image directly
+        try {
+          octx.drawImage(poster, 0, 0, naturalW, naturalH);
+        } catch(drawError) {
+          console.log('Could not draw poster directly, creating composite without template background');
+          // If we can't draw the poster, just create a white background
+        }
 
-      if(photo){
         // Compute circle in natural coordinates
-        const scaleX = naturalW / maskCanvas.width;
-        const scaleY = naturalH / maskCanvas.height;
+        const scaleX = naturalW / posterW;
+        const scaleY = naturalH / posterH;
         const cx = circle.x * scaleX;
         const cy = circle.y * scaleY;
-        const cr = circle.r * scaleX; // x-scale == y-scale for our aspect usage
+        const cr = circle.r * scaleX;
+        
+        console.log('Circle position:', cx, cy, cr);
 
+        // Draw photo in circle
         octx.save();
-        octx.beginPath(); octx.arc(cx, cy, cr, 0, Math.PI*2); octx.clip();
-        // Photo transform at natural scale
+        octx.beginPath(); 
+        octx.arc(cx, cy, cr, 0, Math.PI*2); 
+        octx.clip();
+        
         octx.translate(cx, cy);
         octx.rotate(state.rot);
         const drawW = photo.width * state.scale * scaleX;
         const drawH = photo.height * state.scale * scaleY;
-        const ox = -drawW/2 + state.dx * cr; // move by fraction of radius
+        const ox = -drawW/2 + state.dx * cr;
         const oy = -drawH/2 + state.dy * cr;
         octx.drawImage(photo, ox, oy, drawW, drawH);
         octx.restore();
-      }
 
-      // Trigger download
-      off.toBlob((blob)=>{
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'my-photo-card.png';
-        a.click();
-        setTimeout(()=> URL.revokeObjectURL(a.href), 1000);
-      }, 'image/png');
+        // Use data URL method (more reliable for local files)
+        try {
+          const dataURL = off.toDataURL('image/png', 0.9);
+          const a = document.createElement('a');
+          a.href = dataURL;
+          a.download = 'photo-composite.png';
+          a.style.display = 'none';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          console.log('Download via data URL successful');
+        } catch(dataError) {
+          console.error('Data URL method failed:', dataError);
+          alert('Download failed. This might be due to browser security restrictions.');
+        }
+        
+      } catch(error) {
+        console.error('Download error:', error);
+        alert('Download failed: ' + error.message);
+      }
     });
   </script>
 </body>
