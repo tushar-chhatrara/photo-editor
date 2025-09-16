@@ -10,7 +10,7 @@
       /* ---- SET THESE 3 VALUES TO MATCH YOUR BLACK CIRCLE ---- */
       --circle-x: 50%;   /* center X as percent of image width */
       --circle-y: 50%;   /* center Y as percent of image height */
-      --circle-r: 15.3%; /* radius as percent of image width */
+      --circle-r: 17%; /* radius as percent of image width */
       /* ------------------------------------------------------- */
 
       --ui: 14px;
@@ -22,7 +22,7 @@
     body { display: flex; justify-content: center; align-items: center; background: #f4f4f4; min-height: 100vh; }
 
     .card { width: min(100vw, 480px); background: #fff; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.08); overflow: hidden; }
-    .stage { position: relative; width: 100%; aspect-ratio: 622/1124; background: #eee; }
+    .stage { position: relative; width: 100%; aspect-ratio: 1/1; background: #eee; }
     /* The background poster image (replace src via JS once loaded) */
     #poster { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }    /* clickable hotspot aligned to the circle */
     .hotspot { position:absolute; transform: translate(-50%, -50%); display:grid; place-items:center; cursor: pointer; }
